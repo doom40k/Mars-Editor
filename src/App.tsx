@@ -260,9 +260,12 @@ export default function App() {
     };
   }, []);
 
-  // 2. 登录后自动加载 SQLite 中的最新一篇文章
-  const hasLoadedLatestRef = useRef(false);
+  // 2. 仅在首次进入页面时从 SQLite 加载一次最新文章
+  const initialLoadedRef = useRef(false);
   const loadLatestArticleFromDb = async () => {
+    if (initialLoadedRef.current) return;
+    initialLoadedRef.current = true;
+
     try {
       const latest = await getLatestArticleApi();
       if (latest && typeof latest.content === 'string') {
@@ -292,23 +295,7 @@ export default function App() {
         localStorage.setItem(STORAGE_ACTIVE_DRAFT, latest.id);
         lastSavedRef.current = `${latest.id}:::${articleTitle}:::${latest.content}`;
         setDbSaveStatus('saved');
-        flash('已自动加载 SQLite 最新文章');
-      } else {
-        // 数据库暂无文章时，将本地当前草稿作为第一篇自动同步保存入库
-        setDrafts((prev) => {
-          const cur = prev.find((d) => d.id === activeDraftId) || prev[0];
-          if (cur) {
-            void saveArticleApi({
-              id: cur.id,
-              title: cur.name,
-              content: cur.content,
-            }).then(() => {
-              lastSavedRef.current = `${cur.id}:::${cur.name}:::${cur.content}`;
-              setDbSaveStatus('saved');
-            });
-          }
-          return prev;
-        });
+        flash('已从 SQLite 加载最新文章');
       }
     } catch (err) {
       console.warn('加载 SQLite 最新文章失败', err);
@@ -316,9 +303,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!currentUser || hasLoadedLatestRef.current) return;
-    hasLoadedLatestRef.current = true;
-    void loadLatestArticleFromDb();
+    if (currentUser && !initialLoadedRef.current) {
+      void loadLatestArticleFromDb();
+    }
   }, [currentUser]);
 
   // 3. 防抖自动保存当前文章至 SQLite（800ms）
@@ -356,15 +343,16 @@ export default function App() {
 
   const handleLoginSuccess = (username: string) => {
     setCurrentUser(username);
-    hasLoadedLatestRef.current = false;
     lastSavedRef.current = '';
     flash(`欢迎回来，${username}`);
+    if (!initialLoadedRef.current) {
+      void loadLatestArticleFromDb();
+    }
   };
 
   const handleLogout = async () => {
     await logoutApi();
     setCurrentUser(null);
-    hasLoadedLatestRef.current = false;
     lastSavedRef.current = '';
     flash('已退出登录');
   };

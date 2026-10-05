@@ -1,0 +1,15 @@
+services:
+  mars-editor:
+    build: .
+    container_name: mars-editor
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - ADMIN_USER=admin
+      - ADMIN_PASS=dpp520
+    volumes:
+      # 将 SQLite 数据库持久化到宿主机的 ./data 目录
+      - ./data:/app/data

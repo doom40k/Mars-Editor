@@ -18,6 +18,14 @@ import { SAMPLE_MARKDOWN } from './sample';
 import { getDensity, getTheme } from './theme';
 import { deleteImage, getAllImages, putImage } from './imagedb';
 import { createScrollSyncChannel } from './scrollSync';
+import LoginModal from './components/LoginModal';
+import {
+  checkAuthApi,
+  getLatestArticleApi,
+  getSavedUser,
+  logoutApi,
+  saveArticleApi,
+} from './api';
 import './styles.css';
 
 const STORAGE_KEY = 'wechat-mp-editor:md';
@@ -95,6 +103,11 @@ export default function App() {
   const [initial] = useState(initDraftState);
   const [drafts, setDrafts] = useState<Draft[]>(initial.drafts);
   const [activeDraftId, setActiveDraftId] = useState<string>(initial.activeId);
+
+  // 用户登录状态 & SQLite 自动保存状态
+  const [currentUser, setCurrentUser] = useState<string | null>(() => getSavedUser());
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [dbSaveStatus, setDbSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   // 选中项兜底：id 万一失效就回落到第一篇，且后续写入都用这个真实存在的 id
   const activeDraft = drafts.find((d) => d.id === activeDraftId) ?? drafts[0];
   const activeId = activeDraft?.id ?? '';
@@ -221,6 +234,139 @@ export default function App() {
     } catch {
       return false;
     }
+  };
+
+  // 1. 检查服务端登录态（Token 有效性）
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const user = await checkAuthApi();
+        if (!cancelled) {
+          if (user) {
+            setCurrentUser(user.username);
+          } else {
+            setCurrentUser(null);
+          }
+        }
+      } catch {
+        if (!cancelled) setCurrentUser(null);
+      } finally {
+        if (!cancelled) setIsCheckingAuth(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 2. 登录后自动加载 SQLite 中的最新一篇文章
+  const hasLoadedLatestRef = useRef(false);
+  const loadLatestArticleFromDb = async () => {
+    try {
+      const latest = await getLatestArticleApi();
+      if (latest && typeof latest.content === 'string') {
+        const articleTitle = latest.title || '最新文章';
+        setDrafts((prev) => {
+          const idx = prev.findIndex((d) => d.id === latest.id);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = {
+              ...next[idx],
+              name: articleTitle,
+              content: latest.content,
+              updatedAt: latest.updatedAt || Date.now(),
+            };
+            return next;
+          } else {
+            const newDraft: Draft = {
+              id: latest.id,
+              name: articleTitle,
+              content: latest.content,
+              updatedAt: latest.updatedAt || Date.now(),
+            };
+            return [newDraft, ...prev];
+          }
+        });
+        setActiveDraftId(latest.id);
+        localStorage.setItem(STORAGE_ACTIVE_DRAFT, latest.id);
+        lastSavedRef.current = `${latest.id}:::${articleTitle}:::${latest.content}`;
+        setDbSaveStatus('saved');
+        flash('已自动加载 SQLite 最新文章');
+      } else {
+        // 数据库暂无文章时，将本地当前草稿作为第一篇自动同步保存入库
+        setDrafts((prev) => {
+          const cur = prev.find((d) => d.id === activeDraftId) || prev[0];
+          if (cur) {
+            void saveArticleApi({
+              id: cur.id,
+              title: cur.name,
+              content: cur.content,
+            }).then(() => {
+              lastSavedRef.current = `${cur.id}:::${cur.name}:::${cur.content}`;
+              setDbSaveStatus('saved');
+            });
+          }
+          return prev;
+        });
+      }
+    } catch (err) {
+      console.warn('加载 SQLite 最新文章失败', err);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser || hasLoadedLatestRef.current) return;
+    hasLoadedLatestRef.current = true;
+    void loadLatestArticleFromDb();
+  }, [currentUser]);
+
+  // 3. 防抖自动保存当前文章至 SQLite（800ms）
+  const lastSavedRef = useRef<string>('');
+  useEffect(() => {
+    if (!currentUser || !activeDraft) return;
+    const fingerprint = `${activeDraft.id}:::${activeDraft.name}:::${activeDraft.content}`;
+    // 指纹未变不触发重复保存
+    if (lastSavedRef.current === fingerprint) return;
+
+    // 首次若无指纹则记录并跳过空触发
+    if (!lastSavedRef.current) {
+      lastSavedRef.current = fingerprint;
+      return;
+    }
+
+    setDbSaveStatus('saving');
+    const timer = window.setTimeout(async () => {
+      try {
+        await saveArticleApi({
+          id: activeDraft.id,
+          title: activeDraft.name,
+          content: activeDraft.content,
+        });
+        lastSavedRef.current = fingerprint;
+        setDbSaveStatus('saved');
+      } catch (err) {
+        console.warn('SQLite 自动保存失败', err);
+        setDbSaveStatus('error');
+      }
+    }, 800);
+
+    return () => window.clearTimeout(timer);
+  }, [activeDraft?.id, activeDraft?.name, activeDraft?.content, currentUser]);
+
+  const handleLoginSuccess = (username: string) => {
+    setCurrentUser(username);
+    hasLoadedLatestRef.current = false;
+    lastSavedRef.current = '';
+    flash(`欢迎回来，${username}`);
+  };
+
+  const handleLogout = async () => {
+    await logoutApi();
+    setCurrentUser(null);
+    hasLoadedLatestRef.current = false;
+    lastSavedRef.current = '';
+    flash('已退出登录');
   };
 
   /** 新建草稿 */
@@ -486,6 +632,9 @@ export default function App() {
 
   return (
     <div className="app">
+      {!currentUser && !isCheckingAuth && (
+        <LoginModal onLoginSuccess={handleLoginSuccess} />
+      )}
       <Toolbar
         viewMode={viewMode}
         onViewMode={setViewMode}
@@ -496,6 +645,9 @@ export default function App() {
         onExportBackup={() => void handleExportBackup()}
         onExportImage={() => void handleExportImage()}
         exporting={exporting}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        dbSaveStatus={dbSaveStatus}
       />
       <main className={`workspace ${isPreviewOnly ? 'mode-preview' : ''}`}>
         <ThemeRail

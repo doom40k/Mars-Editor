@@ -2,11 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Archive,
   CaretDown,
+  CircleNotch,
   ClipboardText,
+  Database,
   DownloadSimple,
   FileMd,
   ImageSquare,
+  SignOut,
   UploadSimple,
+  User,
 } from '@phosphor-icons/react';
 
 interface Props {
@@ -24,6 +28,9 @@ interface Props {
   onExportImage: () => void;
   /** 导出进行中：禁用菜单，避免重复触发 */
   exporting: boolean;
+  currentUser?: string | null;
+  onLogout?: () => void;
+  dbSaveStatus?: 'idle' | 'saving' | 'saved' | 'error';
 }
 
 export default function Toolbar({
@@ -36,6 +43,9 @@ export default function Toolbar({
   onExportBackup,
   onExportImage,
   exporting,
+  currentUser,
+  onLogout,
+  dbSaveStatus = 'idle',
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -84,6 +94,28 @@ export default function Toolbar({
             {m === 'split' ? '对照' : '预览'}
           </button>
         ))}
+      </div>
+
+      {/* 数据库保存状态指示 */}
+      <div className={`db-status-badge db-status-${dbSaveStatus}`}>
+        {dbSaveStatus === 'saving' && (
+          <>
+            <CircleNotch size={13} className="spin-icon" />
+            <span>SQLite 保存中…</span>
+          </>
+        )}
+        {dbSaveStatus === 'saved' && (
+          <>
+            <Database size={13} />
+            <span>已保存到 SQLite</span>
+          </>
+        )}
+        {dbSaveStatus === 'error' && (
+          <>
+            <Database size={13} />
+            <span>SQLite 保存失败</span>
+          </>
+        )}
       </div>
 
       <div className="toolbar-right">
@@ -141,6 +173,22 @@ export default function Toolbar({
           <ClipboardText size={15} weight="bold" />
           复制到公众号
         </button>
+
+        {/* 用户信息与退出登录 */}
+        {currentUser && (
+          <div className="user-profile">
+            <span className="user-badge" title={`当前登录: ${currentUser}`}>
+              <User size={13} weight="bold" />
+              <span>{currentUser}</span>
+            </span>
+            {onLogout && (
+              <button className="btn-logout" onClick={onLogout} title="退出当前账号">
+                <SignOut size={14} />
+                <span>退出</span>
+              </button>
+            )}
+          </div>
+        )}
 
         {status && <span className="status show">{status}</span>}
       </div>

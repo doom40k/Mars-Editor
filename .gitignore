@@ -23,3 +23,8 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+
+# SQLite Database
+data/
+*.db
+*.db-journal

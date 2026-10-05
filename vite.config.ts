@@ -50,8 +50,34 @@ function vendorChunk(id: string): string | undefined {
   return undefined;
 }
 
+function marsBackendPlugin() {
+  return {
+    name: 'mars-backend-plugin',
+    configureServer(server: any) {
+      server.middlewares.use(async (req: any, res: any, next: any) => {
+        try {
+          const { apiMiddleware } = await import('./server/api.mjs');
+          await apiMiddleware(req, res, next);
+        } catch (err) {
+          next(err);
+        }
+      });
+    },
+    configurePreviewServer(server: any) {
+      server.middlewares.use(async (req: any, res: any, next: any) => {
+        try {
+          const { apiMiddleware } = await import('./server/api.mjs');
+          await apiMiddleware(req, res, next);
+        } catch (err) {
+          next(err);
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), marsBackendPlugin()],
   base: './',
   build: {
     // 语法高亮与编辑器语法包都已按需加载，剩下的主包应远低于该阈值
